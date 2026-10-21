@@ -22,6 +22,14 @@ import java.util.List;
  * or help text, and exposes the resulting launch configuration via methods to the
  * {@link VideoPlayerApp}.
  * </p>
+ *
+ * <p>
+ * Frame-processor options (for example {@code -j} / {@code --jitter-frames}) are not
+ * known to this class. They are resolved through {@link FrameProcessorRegistry}, and each
+ * occurrence adds a new {@link FrameProcessor} to an ordered list, so options keep
+ * their command-line order and may be repeated. Short options may be stacked, so
+ * {@code -jfddn} means the same as {@code -j -f -d -d -n}.
+ * </p>
  */
 public class CommandLineController {
     private final String[] args;
@@ -32,6 +40,7 @@ public class CommandLineController {
     private Integer displayId;
     private File videoFile;
     private String errorMessage;
+    private final List<FrameProcessor> frameProcessors = new ArrayList<>();
 
     public CommandLineController(String[] args) {
         this.args = args.clone();
@@ -68,6 +77,15 @@ public class CommandLineController {
         return maximiseRequested;
     }
 
+    /**
+     * The frame processors requested on the command line, in command-line order
+     * (a processor requested twice appears twice, as two separate objects).
+     * The caller takes ownership of these objects; this controller does not use them again.
+     */
+    public List<FrameProcessor> getFrameProcessors() {
+        return List.copyOf(frameProcessors);
+    }
+
     public boolean shouldLaunchApplication() {
         return errorMessage == null && videoFile != null;
     }
@@ -75,44 +93,107 @@ public class CommandLineController {
     private void parse() {
         List<String> videoFiles = new ArrayList<>();
         for (String arg : args) {
-            if ("-h".equals(arg) || "--help".equals(arg)) {
-                helpRequested = true;
-            } else if ("-a".equals(arg) || "--audio".equals(arg)) {
-                audioRequested = true;
-            } else if ("-x".equals(arg) || "--maximise".equals(arg)) {
-                maximiseRequested = true;
-            } else if ("-1".equals(arg) || "--monitor-1".equals(arg)) {
-                setDisplayId(1);
-            } else if ("-2".equals(arg) || "--monitor-2".equals(arg)) {
-                setDisplayId(2);
+            if (arg.startsWith("--")) {
+                applyLongOption(arg);
             } else if (arg.startsWith("-")) {
-                errorMessage = "Unknown option: " + arg;
+                applyShortOptions(arg);
             } else {
                 videoFiles.add(arg);
             }
         }
 
         if (videoFiles.size() > 1) {
-            errorMessage = "Usage: VideoPlayer [options] [video-file]";
+            reportError("Usage: VideoPlayer [options] [video-file]");
         } else if (videoFiles.size() == 1) {
             videoFile = new File(videoFiles.get(0));
             if (!videoFile.isFile()) {
-                errorMessage = "File not found: " + videoFile.getPath();
+                reportError("File not found: " + videoFile.getPath());
                 videoFile = null;
             }
         } else {
             if (!helpRequested) {
-                errorMessage = "No video file specified.";
+                reportError("No video file specified.");
             }
         }
     }
 
+    /** Handles one long option, for example {@code --jitter-frames}. */
+    private void applyLongOption(String arg) {
+        String name = arg.substring(2);
+        if (applyPlayerLongOption(name)) {
+            return;
+        }
+        FrameProcessorRegistry.findByLongFlag(name).ifPresentOrElse(
+                option -> frameProcessors.add(option.create()),
+                () -> reportError("Unknown option: " + arg));
+    }
+
+    /**
+     * Handles one dash-prefixed argument holding one or more short options, for example
+     * {@code -a} or the stacked {@code -jfddn}. Each letter is applied in order.
+     */
+    private void applyShortOptions(String arg) {
+        if (arg.length() == 1) {
+            reportError("Unknown option: " + arg);
+            return;
+        }
+        for (char flag : arg.substring(1).toCharArray()) {
+            applyShortOption(flag);
+        }
+    }
+
+    private void applyShortOption(char flag) {
+        if (applyPlayerShortOption(flag)) {
+            return;
+        }
+        FrameProcessorRegistry.findByShortFlag(flag).ifPresentOrElse(
+                option -> frameProcessors.add(option.create()),
+                () -> reportError("Unknown option: -" + flag));
+    }
+
+    /** Applies the player's own short options. Returns false if the letter is not one of them. */
+    private boolean applyPlayerShortOption(char flag) {
+        switch (flag) {
+            case 'h' -> helpRequested = true;
+            case 'a' -> audioRequested = true;
+            case 'x' -> maximiseRequested = true;
+            case '1' -> setDisplayId(1);
+            case '2' -> setDisplayId(2);
+            default -> {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Applies the player's own long options. Returns false if the name is not one of them. */
+    private boolean applyPlayerLongOption(String name) {
+        switch (name) {
+            case "help" -> helpRequested = true;
+            case "audio" -> audioRequested = true;
+            case "maximise" -> maximiseRequested = true;
+            case "monitor-1" -> setDisplayId(1);
+            case "monitor-2" -> setDisplayId(2);
+            default -> {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private void setDisplayId(int displayId) {
         if (this.displayId != null && this.displayId != displayId) {
-            errorMessage = "Only one display option can be used";
+            reportError("Only one display option can be used");
             return;
         }
         this.displayId = displayId;
+    }
+
+    /** Records an error, keeping the first one so the root cause is not hidden by a later, less useful message. */
+    private void reportError(String message) {
+        if (errorMessage == null) {
+            errorMessage = message;
+        }
     }
 
     private void printHelp() {
