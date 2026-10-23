@@ -5,6 +5,8 @@
 package comp3011;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -92,5 +94,84 @@ class CommandLineControllerTest {
 
         assertEquals(2, processors.size());
         assertNotSame(processors.get(0), processors.get(1));
+    }
+    
+    // An unknown stacked letter must be rejected, not silently ignored.
+    @Test
+    void unknownShortOptionIsAnError() throws IOException {
+        CommandLineController controller = parse("-z");
+
+        assertFalse(controller.shouldLaunchApplication());
+        assertEquals("Unknown option: -z", controller.getErrorMessage());
+        assertEquals(1, controller.getExitCode());
+    }
+
+    @Test
+    void unknownLongOptionIsAnError() throws IOException {
+        CommandLineController controller = parse("--bogus");
+
+        assertFalse(controller.shouldLaunchApplication());
+        assertEquals("Unknown option: --bogus", controller.getErrorMessage());
+    }
+
+    // The first error is the root cause; a later problem (here: no file) must not hide it.
+    @Test
+    void firstErrorIsKept() {
+        CommandLineController controller = new CommandLineController(new String[] { "-z" });
+
+        assertEquals("Unknown option: -z", controller.getErrorMessage());
+    }
+
+    @Test
+    void missingVideoFileIsAnError() {
+        CommandLineController controller = new CommandLineController(new String[] { "-n" });
+
+        assertFalse(controller.shouldLaunchApplication());
+        assertEquals("No video file specified.", controller.getErrorMessage());
+    }
+
+    @Test
+    void nonexistentVideoFileIsAnError() {
+        CommandLineController controller =
+                new CommandLineController(new String[] { "no-such-file.mp4" });
+
+        assertFalse(controller.shouldLaunchApplication());
+        assertTrue(controller.getErrorMessage().startsWith("File not found"));
+    }
+
+    // Help alone is not an error: exit code 0, but the player must not launch.
+    @Test
+    void helpAloneIsNotAnErrorAndDoesNotLaunch() {
+        CommandLineController controller = new CommandLineController(new String[] { "-h" });
+
+        assertFalse(controller.shouldLaunchApplication());
+        assertEquals(0, controller.getExitCode());
+    }
+
+    // Player options and effects can share one stacked argument and still all take effect.
+    @Test
+    void playerOptionsAndEffectsCanBeStackedTogether() throws IOException {
+        CommandLineController controller = parse("-ax1wy");
+
+        assertTrue(controller.isAudioRequested());
+        assertTrue(controller.isMaximiseRequested());
+        assertEquals(1, controller.getDisplayId());
+        assertEquals(List.of(FrameBlackAndWhiter.class, FrameYellower.class), classesOf(controller));
+    }
+
+    @Test
+    void conflictingDisplayOptionsAreAnError() throws IOException {
+        CommandLineController controller = parse("-12");
+
+        assertFalse(controller.shouldLaunchApplication());
+        assertEquals("Only one display option can be used", controller.getErrorMessage());
+    }
+
+    // Callers receive a read-only snapshot, so they can't corrupt the controller's list.
+    @Test
+    void returnedProcessorListCannotBeModified() throws IOException {
+        List<FrameProcessor> processors = parse("-n").getFrameProcessors();
+
+        assertThrows(UnsupportedOperationException.class, processors::clear);
     }
 }
