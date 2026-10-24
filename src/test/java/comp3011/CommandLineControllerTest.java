@@ -16,6 +16,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -173,5 +175,27 @@ class CommandLineControllerTest {
         List<FrameProcessor> processors = parse("-n").getFrameProcessors();
 
         assertThrows(UnsupportedOperationException.class, processors::clear);
+    }
+    
+    // Pins the help text so any accidental change to wording or layout is caught.
+    // Line endings are normalised, since Windows and Linux print them differently.
+    @Test
+    void helpTextMatchesSpecification() {
+        PrintStream original = System.out;
+        ByteArrayOutputStream captured = new ByteArrayOutputStream();
+        System.setOut(new PrintStream(captured));
+        try {
+            new CommandLineController(new String[] { "-h" });
+        } finally {
+            System.setOut(original);
+        }
+
+        String help = captured.toString().replace("\r\n", "\n");
+
+        assertTrue(help.contains("  -h, --help         Show this help message\n"));
+        assertTrue(help.contains("  -n, --number-frames"));
+        assertTrue(help.contains("  -p, --pepper-frames"));
+        assertTrue(help.contains("Frame processors are applied in command-line order and may be repeated.\n"));
+        assertTrue(help.contains("Example: -nssnfwyvdjmbp"));
     }
 }
