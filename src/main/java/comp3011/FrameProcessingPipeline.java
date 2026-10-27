@@ -12,6 +12,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.bytedeco.javacv.Frame;
@@ -42,8 +43,8 @@ import org.bytedeco.javacv.Frame;
  * <li><b>Bounded memory:</b> a semaphore limits frames in flight. {@link #submit} waits for a free slot, which
  * stops the decoder racing ahead of the display.</li>
  * <li><b>Shared effects:</b> all workers share one instance of each effect, so every effect's process method must
- * be safe to call concurrently (see EffectChainThreadSafetyTest). The effects must be initialised before the first
- * submit.</li>
+ * be safe to call concurrently (see EffectChainThreadSafetyTest). The effects are initialised once, by the decode
+ * thread, through {@link #initialiseEffectsOnce} before the first frame is submitted.</li>
  * </ul>
  */
 public final class FrameProcessingPipeline implements AutoCloseable {
@@ -57,9 +58,10 @@ public final class FrameProcessingPipeline implements AutoCloseable {
     private final Semaphore freeSlots;
     private final Queue<Future<ProcessedFrame>> inFlight = new ConcurrentLinkedQueue<>();
     private volatile boolean inputFinished;
+    private boolean effectsInitialised; // Only touched by decode threads, one at a time (see initialiseEffectsOnce).
 
     /**
-     * @param effectChain       effects in the order they must be applied; already initialised
+     * @param effectChain       effects in the order they must be applied; initialised later, on the first frame
      * @param workerCount       number of threads processing frames at the same time
      * @param maxFramesInFlight most frames that may be submitted but not yet collected
      */
@@ -84,6 +86,35 @@ public final class FrameProcessingPipeline implements AutoCloseable {
     public void finishInput() {
         inputFinished = true;
     }
+    
+    /**
+     * Initialises every effect with the video's properties, the first time it is called. Later calls do nothing, so a
+     * seek (which starts a new decoder) never re-initialises effects that workers may still be using. Called only
+     * from the decode thread; a stopped decoder is always joined before the next one starts, so two calls never
+     * overlap and the flag needs no lock.
+     */
+    public void initialiseEffectsOnce(InfoVideo videoInfo) throws Exception {
+        if (effectsInitialised) {
+            return;
+        }
+        for (FrameProcessor effect : effectChain) {
+            effect.initialise(videoInfo);
+        }
+        effectsInitialised = true;
+    }
+
+    /**
+     * Throws away every frame that has been submitted but not collected, so playback can continue from a new position
+     * after a seek. Call it only while the producer is stopped and from the consumer thread.
+     */
+    public void discardPending() {
+        Future<ProcessedFrame> pending;
+        while ((pending = inFlight.poll()) != null) {
+            pending.cancel(true);
+            freeSlots.release();
+        }
+        inputFinished = false;
+    }
 
     /**
      * Returns the oldest submitted frame if its effects have finished, otherwise null. Never blocks.
@@ -105,11 +136,20 @@ public final class FrameProcessingPipeline implements AutoCloseable {
         return inputFinished && inFlight.isEmpty();
     }
 
-    /** Abandons all queued work. Frames still being processed are simply discarded. */
+    /**
+     * Abandons all queued work and waits briefly for workers to finish the frame they are on. The wait matters: the
+     * next playback re-initialises the shared effects, which must not happen while a stale worker is still using
+     * them.
+     */
     @Override
     public void close() {
         workers.shutdownNow();
         inFlight.clear();
+        try {
+            workers.awaitTermination(2, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private ProcessedFrame applyEffects(Frame ownedCopy, InfoFrame info) throws Exception {
