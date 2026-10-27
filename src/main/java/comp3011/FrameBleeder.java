@@ -4,7 +4,7 @@
  * 
  * Authors:
  *   1. Simon Ratcliffe, in collaboration with GPT-5.6 Terra
- *   2. <student name and student number insert here upon modification>
+ *   2. Raunaqdeep Singh Khosla, a1954269
  *
  * Copyright 2026 Simon Ratcliffe
  */
@@ -60,8 +60,10 @@ public class FrameBleeder extends FrameProcessor {
         buildSamplingLookups();
     }
 
+    // synchronized: brightMask, horizontalBlurMask and blurredMask are scratch arrays rewritten for every frame.
+    // Worker threads share this one instance, so concurrent calls would corrupt each other's masks.
     @Override
-    public void process(Frame frame, InfoFrame info) throws Exception {
+    public synchronized void process(Frame frame, InfoFrame info) throws Exception {
         if (frame.image == null || frame.image.length == 0 || frame.image[0] == null) {
             return;
         }
