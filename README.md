@@ -19,7 +19,7 @@ mvn javafx:run -Djavafx.args="-nssnfwyvdjmbp C:\path\to\video.mp4"
 ```
 
 - `mvn verify` runs the unit tests (Surefire) and then the load test (Failsafe, `PlaybackLoadComparisonIT`). The load
-  test takes about 20 seconds and writes a report to `target/load-test-report.txt`.
+  test takes about 20 seconds on an idle machine and writes a report to `target/load-test-report.txt`.
 - Run `-h` for the options: `-a` audio, `-x` maximise, `-1`/`-2` monitor, and the eleven effect options. Effect options
   can be long or short, stacked (`-jfddn`), repeated (`-ss`) and mixed, and are applied in command-line order.
 
@@ -109,7 +109,8 @@ one frame (`awaitingFrameAfterSeek`).
 
 **Load test** (`mvn verify`, `PlaybackLoadComparisonIT`): synthetic 1920x800 frames, 48 measured frames per run,
 16 workers on an 18-thread CPU. "Single-threaded" applies every effect to every frame on one thread, as the original
-did. Effects beyond 11 repeat the same sequence, which the command line allows.
+did. Effects beyond 11 repeat the same sequence, which the command line allows. The table is the best run, made on an
+otherwise idle machine (see the limitation on machine load below).
 
 | Effects | Single-threaded fps | Pipeline fps | Speedup |
 |---|---|---|---|
@@ -122,9 +123,9 @@ did. Effects beyond 11 repeat the same sequence, which the command line allows.
 | 33 | 11.5 | 59.6 | 5.17 |
 
 Real-time rate is 23.98 fps. **Most effects sustained in real time: single-threaded 16, pipeline 33** (the sweep stops
-at 33, so the pipeline's limit is at least that). The assertions are loose on purpose: the pipeline must sustain
-more effects than single-threaded on a machine with 8 or more cores, and must not be slower on a small one, so a
-weak build machine cannot fail the build.
+at 33, so the pipeline's limit is at least that). The assertions are loose on purpose: the pipeline must sustain at
+least as many effects in real time as single-threaded processing, and must not be slower than it with all effects, so
+a weak or busy build machine cannot fail the build.
 
 **Live playback** (`simpsons.mp4`, 1920x800, 23.98 fps; console line "Frame headroom"):
 
@@ -145,14 +146,18 @@ Escape stops and exits; playback to the end shows "Playback finished". All behav
 ### Limitations
 
 - **Locked effects cap throughput.** Because `Jitterer`, `Mottler` and `Bleeder` are `synchronized`, only one frame at
-  a time can be inside each. In the load test the pipeline levels off at about 60 to 67 fps once `Bleeder` is in the
-  chain (about 2.5 times real time). Giving those effects per-thread scratch buffers would lift the cap; I chose the
-  simple, obviously-correct lock because the player's actual need is 24 fps.
+  a time can be inside each. In the load test the pipeline levels off at roughly 50 to 68 fps once `Bleeder` is in the
+  chain (about 2 to 2.8 times real time, varying a little between runs). Giving those effects per-thread scratch
+  buffers would lift the cap; I chose the simple, obviously-correct lock because the player's actual need is 24 fps.
 - **The deep copy is on the decode thread.** Each frame is copied once before it is handed to a worker. The grabber
   reuses its buffer, so the copy cannot be done later.
 - **Seeking waits for the decode thread to stop**, which takes at most one grab (and at most 3 s in a fault case).
 - **The load test measures effect processing only.** It does not include decoding, conversion or display, so it
   does not reproduce the original player's full per-frame cost; the live runs above cover the whole player.
+- **The load test is sensitive to machine load.** A second run, made while the machine was busy, gave much lower
+  pipeline throughput (real-time limit: single-threaded 8, pipeline 16, instead of 16 and 33) and took 39 s instead
+  of 20 s. The pipeline's advantage held but shrank, so the table above is the best run, made on an otherwise idle
+  machine.
 - **The "Frame headroom" figure is now measured when a finished frame is picked up from the pipeline**, so it shows
   whether frames were ready in time; it can no longer show how far ahead the workers are.
 - **The live runs are short and from one video.** Run C has only 11 samples, and the baseline comparison comes from a
