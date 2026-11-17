@@ -21,3 +21,9 @@ target/
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 replay_pid*
+
+# API keys: never commit these
+key.txt
+*.key
+application-local.properties
+secrets/
