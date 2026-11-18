@@ -50,7 +50,8 @@ public final class FrameProcessorRegistry {
             new FrameProcessorOption('j', "jitter-frames", "Randomly displace frames by a few pixels", FrameJitterer::new),
             new FrameProcessorOption('m', "mottle-frames", "Add cloudy emulsion mottling", FrameMottler::new),
             new FrameProcessorOption('b', "bleed-frames", "Bleed light into frames", FrameBleeder::new),
-            new FrameProcessorOption('p', "pepper-frames", "Pepper frames with dark spots/blotches", FramePepperer::new));
+            new FrameProcessorOption('p', "pepper-frames", "Pepper frames with dark spots/blotches", FramePepperer::new),
+            new FrameProcessorOption('S', "subtitle-frames", "Add speech-to-text subtitles to frames", FrameSubtitler::new));
 
     private FrameProcessorRegistry() {
         // Static lookup only; not meant to be instantiated.

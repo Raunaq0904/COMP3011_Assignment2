@@ -30,7 +30,7 @@ class FrameProcessorRegistryTest {
 
     @Test
     void helpListsEveryRegisteredProcessor() {
-        assertEquals(11, FrameProcessorRegistry.helpLines().size());
+        assertEquals(12, FrameProcessorRegistry.helpLines().size());
     }
 
     @Test
