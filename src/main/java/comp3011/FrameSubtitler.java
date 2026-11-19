@@ -26,6 +26,7 @@ public class FrameSubtitler extends FrameProcessor {
     private final SubtitleTrack track;
     private final Map<SubtitleCue, SubtitleOverlay> overlays = new ConcurrentHashMap<>();
     private SubtitleRenderer renderer;
+    private volatile boolean enabled = true; // Flipped by the JavaFX thread, read by the worker threads.
 
     public FrameSubtitler() {
         this(demoTrack());
@@ -48,9 +49,20 @@ public class FrameSubtitler extends FrameProcessor {
         super.initialise(videoInfo);
         renderer = new SubtitleRenderer(videoInfo.imageWidth(), videoInfo.imageHeight());
     }
+    
+    public void setEnabled(boolean enabled) {
+        this.enabled = enabled;
+    }
+
+    public boolean isEnabled() {
+        return enabled;
+    }
 
     @Override
     public void process(Frame frame, InfoFrame info) throws Exception {
+        if (!enabled) {
+            return;
+        }
         if (frame.image == null || frame.image.length == 0 || frame.image[0] == null) {
             return;
         }

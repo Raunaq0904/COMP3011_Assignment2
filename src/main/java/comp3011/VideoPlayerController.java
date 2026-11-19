@@ -18,6 +18,7 @@ import javafx.scene.Scene;
 import javafx.scene.image.Image;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
+import java.util.ArrayList;
 
 /**
  * The controller part of the video player model-view-controller architecture.
@@ -31,6 +32,7 @@ public class VideoPlayerController {
     private final VideoPlayerModel model;
     private final VideoPlayerView view;
     private final BiConsumer<Integer, Integer> videoSizeChangedHandler;
+    private final List<FrameSubtitler> subtitlers = new ArrayList<>();
 
     public VideoPlayerController(
             boolean audioEnabled,
@@ -38,9 +40,25 @@ public class VideoPlayerController {
             BiConsumer<Integer, Integer> videoSizeChangedHandler) {
         this.view = new VideoPlayerView();
         this.videoSizeChangedHandler = videoSizeChangedHandler;
+
+        // Subtitles can be switched on during playback even when -S was not given, so make sure the chain always has
+        // a subtitler: one that starts switched off when the user did not ask for subtitles.
+        List<FrameProcessor> processors = new ArrayList<>(frameProcessors);
+        for (FrameProcessor processor : processors) {
+            if (processor instanceof FrameSubtitler subtitler) {
+                subtitlers.add(subtitler);
+            }
+        }
+        if (subtitlers.isEmpty()) {
+            FrameSubtitler idleSubtitler = new FrameSubtitler();
+            idleSubtitler.setEnabled(false);
+            processors.add(idleSubtitler);
+            subtitlers.add(idleSubtitler);
+        }
+
         model = new VideoPlayerModel(
                 audioEnabled,
-                frameProcessors,
+                processors,
                 this::onVideoSizeChanged,
                 this::onFrameReady,
                 this::onStatusChanged,
@@ -54,6 +72,8 @@ public class VideoPlayerController {
         view.getStopButton().setOnAction(_ -> stopAndExit());
         view.getAudioButton().setOnAction(_ -> toggleAudioOutput());
         view.showAudioEnabled(model.isAudioOutputEnabled());
+        view.getSubtitleButton().setOnAction(_ -> toggleSubtitles());
+        view.showSubtitlesEnabled(subtitlers.get(0).isEnabled());
     }
 
     public void installKeyboardShortcuts(Scene scene) {
@@ -75,6 +95,9 @@ public class VideoPlayerController {
                 event.consume();
             } else if (event.getCode() == KeyCode.A) {
                 toggleAudioOutput();
+                event.consume();
+            } else if (event.getCode() == KeyCode.S) {
+                toggleSubtitles();
                 event.consume();
             }
         });
@@ -116,6 +139,14 @@ public class VideoPlayerController {
     private void stopAndExit() {
         model.stopPlayback();
         javafx.application.Platform.exit();
+    }
+    
+    private void toggleSubtitles() {
+        boolean enable = !subtitlers.get(0).isEnabled();
+        for (FrameSubtitler subtitler : subtitlers) {
+            subtitler.setEnabled(enable);
+        }
+        view.showSubtitlesEnabled(enable);
     }
 
     private void onVideoSizeChanged(int width, int height) {

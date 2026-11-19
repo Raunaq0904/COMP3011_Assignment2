@@ -65,4 +65,15 @@ class FrameSubtitlerTest {
 
         assertFalse(changed(frame));
     }
+    
+    @Test
+    void leavesTheFrameAloneWhenSwitchedOff() throws Exception {
+        Frame frame = greyFrame();
+        FrameSubtitler subtitler = subtitlerFor(frame);
+        subtitler.setEnabled(false);
+
+        subtitler.process(frame, new InfoFrame(50, 2 * SECOND));
+
+        assertFalse(changed(frame));
+    }
 }
