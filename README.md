@@ -1,7 +1,9 @@
 # VideoPlayerMultiThreaded
 
-COMP3011 Assignment 2. A JavaFX video player with film-style frame effects, re-engineered from a single-threaded
-cooperative design into a multi-threaded one that stacks many more effects before falling behind real time.
+COMP3011 Assignments 2 and 3. Assignment 2 is a JavaFX video player with film-style frame effects, re-engineered from a
+single-threaded cooperative design into a multi-threaded one. Assignment 3 adds speech-to-text subtitles (`-S`) through
+a small Spring Boot server that calls OpenAI's transcription API. Assignment 3 is described in the section
+"Assignment 3: speech-to-text subtitles" below.
 
 Author: Raunaqdeep Singh Khosla, a1954269. The starter code is by Simon Ratcliffe (see the headers of the starter
 files). Every file I modified or added carries my name in its header.
@@ -177,6 +179,127 @@ the areas that carry risk:
   decoder reusing its buffer.
 - `PlaybackLoadComparisonIT`: the load test above.
 
+The Assignment 3 tests are listed in the Assignment 3 section below.
+
+## Assignment 3: speech-to-text subtitles
+
+### Running it
+
+The subtitle server and the player are two separate programs. Start the server first.
+
+```
+set OPENAI_API_KEY=<the key>          (Windows cmd; in PowerShell: $env:OPENAI_API_KEY = "<the key>")
+mvn -f server/pom.xml spring-boot:run
+mvn javafx:run -Djavafx.args="C:\path\to\video.mp4 -S"
+```
+
+- The key is read only from the `OPENAI_API_KEY` environment variable. It is not in the code, the comments, the tests
+  or this repository (`key.txt`, `*.key` and `secrets/` are in `.gitignore`).
+- Subtitles are switched on by the `-S` / `--subtitle-frames` option, by the button to the right of the mute button,
+  or by pressing `s`. The same button and key switch them off again.
+- `mvn verify` runs the player's tests. `mvn -f server/pom.xml verify` runs the server's.
+
+### Server (`server/`)
+
+`POST /api/v1/subtitles` takes an audio file, asks OpenAI's `whisper-1` for a `verbose_json` transcription with word
+and segment timestamps, drops every segment with `noSpeechProb > 0.6` and `aveLogProb < -1.0`, and returns the
+remaining segments. `GET /api/v1/global/usage` returns `{ "usage": <seconds of audio transcribed> }`. Errors are
+reported with distinct status codes: 400 bad request, 413 file too large, 502 the OpenAI call failed (the real cause is
+logged), 503 no API key configured.
+
+### Player: how subtitles reach the screen
+
+| Class | Thread | Responsibility |
+|---|---|---|
+| `SubtitleFeeder` | its own daemon thread (`subtitle-feeder`) | Reads audio, calls the server, publishes the result. Started the first time subtitles are switched on. |
+| `AudioChunkExtractor` | feeder thread | Reads the media's audio through its own `FFmpegFrameGrabber` (16 kHz mono) and cuts it into WAV chunks. |
+| `SubtitleServerClient` | feeder thread | Posts a chunk to the server and parses the reply (`MiniJson`, JDK only). |
+| `SubtitleCueBuilder`, `SubtitleText` | feeder thread | Turn segments into cues of 1 to 7 s, at most 2 lines of at most 42 characters, broken after punctuation. |
+| `SubtitleTrack` | any thread | Immutable list of cues. |
+| `FrameSubtitler`, `SubtitleRenderer` | worker threads | Draw the active cue (white sans-serif text, black outline) onto a frame. |
+
+- **The feeder never touches the playback decoder.** It opens its own grabber on the same file, so the rule from
+  Assignment 2 (only the decode thread uses the playback grabber) still holds.
+- **Publishing is one volatile reference.** The feeder builds a new immutable `SubtitleTrack` and swaps it in. The worker
+  threads only read that reference, so they never wait for the network. They also pass the frame's timestamp back to
+  the feeder through one volatile number.
+- **Subtitles appear when the words are spoken.** The first chunk is short (8 s) and starts where the video is
+  playing, so subtitles show up soon after they are switched on. Later chunks are 30 s. Cues are placed by the
+  segment's own start time.
+- **Each part of the audio is sent once.** A coverage map records what has been sent. The feeder works forward from
+  the playback position and then wraps round to anything skipped. Seeking therefore never causes a repeat request.
+- **Switching off.** The feeder sleeps while subtitles are off and checks again before every request, so no audio is
+  sent while they are off. Frames that were already processed ahead of the display (up to about half a second) may
+  still show a subtitle for a moment. New frames carry none.
+- **Switching on.** The cues found so far are used straight away. The feeder wakes up and its next chunk starts from
+  the current playback position, so subtitles for what is being spoken now appear quickly.
+
+### When things go wrong
+
+The server being down, the network dropping and an error reply all arrive as an `IOException`. The feeder waits (1, 2,
+4, ... up to 10 s), retries the same stretch of audio, and prints a short message on the first failure and on every
+tenth after that. When the server comes back, subtitles resume by themselves. A failure of the server keeps the media
+open. A failure reading the media (for example a USB drive being removed) closes it and opens it again on the next
+retry. Neither stops or slows playback, because the feeder is a separate thread and the drawing code never waits for it.
+
+### Assignment 3 tests
+
+81 player tests and the server tests, all passing. The ones that matter most for this part: `SubtitleFeederTest`
+(no requests while off; resumes when on; recovers from server failure with the media kept open; reopens lost media;
+starts at the playback position; covers the media exactly once), `SubtitleCueBuilderTest`, `SubtitleTextTest`,
+`SubtitleServerClientTest` (against a local test server), `AudioChunkExtractorTest` (real WAV files), `MiniJsonTest`,
+`FrameSubtitlerTest`, and on the server `SegmentFilterTest` and `TranscriptionServiceTest`.
+
+I also checked by hand on Windows, with `simpsons.mp4` and a real API key: subtitles appear as the words are spoken and
+match the speech; the button and `s` switch them on and off; the server usage figure matches the length of the audio
+sent; the server was stopped and restarted during playback, and playback stayed smooth and subtitles came back by
+themselves.
+
+### Assignment 3 limitations
+
+- **The whole film is transcribed in the background, not only what the viewer reaches.** That is the reason subtitles are
+  ready early and seeking is cheap, but a long film uses more API audio than a viewer who stops early would.
+- **Losing the media file is covered by a unit test but I have not tested it by hand** with a real drive being removed.
+- **A new video on a USB drive** goes through the same path as `simpsons.mp4`. I only tested a short trailer by hand.
+- **There is no caching on the server.** Playing the same file again sends its audio again.
+- **Toggling subtitles while the video is paused** was not tested by hand.
+- **Opening the feeder's grabber at startup** can cost one slow frame (one negative "Frame headroom" line at start).
+
 ## Acknowledgements
 
 Starter code: Simon Ratcliffe, in collaboration with GPT-5.6 Terra, Adelaide University COMP3011.
+Assignment 3 uses OpenAI's speech-to-text API through the subtitle server, and Spring Boot for the server.
+
+## AI acknowledgement
+
+The assignment allows generative AI tools for software research, design, development and testing, provided
+their use is acknowledged and the submitted code has passed my own scrutiny. I used Claude (Anthropic's generative AI
+assistant) throughout Assignment 3. This section sets out how.
+
+### How Claude was used
+
+- **Design:** Claude helped me plan the subtitle track and renderer, the background feeder thread, the
+  server API and the error handling.
+- **Development:** Claude wrote the code for the new classes and the edits to existing classes. Each new
+  file says so in its header comment.
+- **Testing:** Claude wrote the unit tests.
+- **Debugging and setup:** Claude helped me diagnose problems, including the 401 API key error, the retry
+  and logging behaviour, and Maven and Eclipse setup issues.
+- **Documentation:** Claude helped me draft this README.
+
+### My own work and scrutiny
+
+- I typed or pasted every change into the project myself and read each one before committing it. I made
+  every commit, so the Git history reflects how the project was actually built, step by step.
+- I ran the builds and the full test suite myself.
+- I tested the player and server end to end on a real video. I checked that subtitles appear and disappear
+  correctly, that the S key and the subtitle button work, and that playback copes when the server is
+  stopped and restarted.
+- I made the decisions about scope and priorities, including what to leave out because of time.
+- I can explain what each class does, why it is included, and why it is written the way it is.
+
+### Boundaries
+
+- Claude did not run Git commands or edit my project files directly.
+- The API key does not appear anywhere in the code, comments, tests or repository. It is read only from
+  the `OPENAI_API_KEY` environment variable.

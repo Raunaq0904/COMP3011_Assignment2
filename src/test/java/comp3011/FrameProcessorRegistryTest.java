@@ -4,6 +4,8 @@
  */
 package comp3011;
 
+// Assignment 3: the subtitle changes in this file were written with the assistance of Claude (see the "AI acknowledgement" section of README.md).
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;

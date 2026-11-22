@@ -10,6 +10,8 @@
  */
 package comp3011;
 
+// Assignment 3: the subtitle changes in this file were written with the assistance of Claude (see the "AI acknowledgement" section of README.md).
+
 import java.io.File;
 import java.util.List;
 import java.util.function.BiConsumer;

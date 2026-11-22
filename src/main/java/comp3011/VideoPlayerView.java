@@ -10,6 +10,8 @@
  */
 package comp3011;
 
+// Assignment 3: the subtitle changes in this file were written with the assistance of Claude (see the "AI acknowledgement" section of README.md).
+
 import javafx.geometry.Insets;
 import javafx.geometry.Point2D;
 import javafx.geometry.Pos;
