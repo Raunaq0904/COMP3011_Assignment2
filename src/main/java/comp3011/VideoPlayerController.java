@@ -33,6 +33,7 @@ public class VideoPlayerController {
     private final VideoPlayerView view;
     private final BiConsumer<Integer, Integer> videoSizeChangedHandler;
     private final List<FrameSubtitler> subtitlers = new ArrayList<>();
+    private SubtitleFeeder subtitleFeeder; // Created in play(). Used on the JavaFX thread only.
 
     public VideoPlayerController(
             boolean audioEnabled,
@@ -109,11 +110,26 @@ public class VideoPlayerController {
 
     public void play(File file) {
         view.setPlaybackControlsDisabled(false);
+        startSubtitleFeeder(file);
         model.play(file);
     }
 
     public void shutdown() {
+        if (subtitleFeeder != null) {
+            subtitleFeeder.shutdown();
+        }
         model.shutdown();
+    }
+
+    // The feeder reads the media's audio with a grabber of its own and talks to the subtitle server, both on its own
+    // thread. It does nothing until subtitles are switched on, so a run without -S never touches the server.
+    private void startSubtitleFeeder(File media) {
+        SubtitleServerClient client = new SubtitleServerClient();
+        subtitleFeeder = new SubtitleFeeder(() -> new AudioChunkExtractor(media), client::transcribe);
+        for (FrameSubtitler subtitler : subtitlers) {
+            subtitler.attach(subtitleFeeder::track, subtitleFeeder::noteFramePosition);
+        }
+        subtitleFeeder.setEnabled(subtitlers.get(0).isEnabled());
     }
 
     private void startOver() {
@@ -145,6 +161,9 @@ public class VideoPlayerController {
         boolean enable = !subtitlers.get(0).isEnabled();
         for (FrameSubtitler subtitler : subtitlers) {
             subtitler.setEnabled(enable);
+        }
+        if (subtitleFeeder != null) {
+            subtitleFeeder.setEnabled(enable);
         }
         view.showSubtitlesEnabled(enable);
     }

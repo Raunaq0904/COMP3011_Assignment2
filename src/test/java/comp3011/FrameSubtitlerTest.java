@@ -6,10 +6,13 @@
  */
 package comp3011;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import org.bytedeco.javacv.Frame;
@@ -40,11 +43,18 @@ class FrameSubtitlerTest {
         return false;
     }
 
+    private static InfoVideo infoFor(Frame frame) {
+        return new InfoVideo("test.mp4", 100, WIDTH, HEIGHT, Frame.DEPTH_UBYTE, 3, frame.imageStride,
+                25.0, 25, 40_000, 0);
+    }
+
+    private static SubtitleTrack helloTrack() {
+        return new SubtitleTrack(List.of(new SubtitleCue(1 * SECOND, 3 * SECOND, "Hello there.")));
+    }
+
     private static FrameSubtitler subtitlerFor(Frame frame) throws Exception {
-        SubtitleTrack track = new SubtitleTrack(List.of(new SubtitleCue(1 * SECOND, 3 * SECOND, "Hello there.")));
-        FrameSubtitler subtitler = new FrameSubtitler(track);
-        subtitler.initialise(new InfoVideo("test.mp4", 100, WIDTH, HEIGHT, Frame.DEPTH_UBYTE, 3, frame.imageStride,
-                25.0, 25, 40_000, 0));
+        FrameSubtitler subtitler = new FrameSubtitler(helloTrack());
+        subtitler.initialise(infoFor(frame));
         return subtitler;
     }
 
@@ -65,7 +75,7 @@ class FrameSubtitlerTest {
 
         assertFalse(changed(frame));
     }
-    
+
     @Test
     void leavesTheFrameAloneWhenSwitchedOff() throws Exception {
         Frame frame = greyFrame();
@@ -75,5 +85,44 @@ class FrameSubtitlerTest {
         subtitler.process(frame, new InfoFrame(50, 2 * SECOND));
 
         assertFalse(changed(frame));
+    }
+
+    @Test
+    void drawsCuesFromTheSourceItIsAttachedTo() throws Exception {
+        Frame frame = greyFrame();
+        FrameSubtitler subtitler = new FrameSubtitler();
+        subtitler.initialise(infoFor(frame));
+        SubtitleTrack track = helloTrack();
+        subtitler.attach(() -> track, timestampUs -> {
+        });
+
+        subtitler.process(frame, new InfoFrame(50, 2 * SECOND));
+
+        assertTrue(changed(frame));
+    }
+
+    @Test
+    void showsNothingUntilItIsAttachedToASource() throws Exception {
+        Frame frame = greyFrame();
+        FrameSubtitler subtitler = new FrameSubtitler();
+        subtitler.initialise(infoFor(frame));
+
+        subtitler.process(frame, new InfoFrame(50, 2 * SECOND));
+
+        assertFalse(changed(frame)); // In particular, no demo text is ever drawn.
+    }
+
+    @Test
+    void reportsTheFramePositionEvenWhileSwitchedOff() throws Exception {
+        Frame frame = greyFrame();
+        FrameSubtitler subtitler = new FrameSubtitler();
+        subtitler.initialise(infoFor(frame));
+        List<Long> positions = Collections.synchronizedList(new ArrayList<>());
+        subtitler.attach(() -> SubtitleTrack.EMPTY, positions::add);
+        subtitler.setEnabled(false);
+
+        subtitler.process(frame, new InfoFrame(50, 2 * SECOND));
+
+        assertEquals(List.of(2 * SECOND), positions);
     }
 }

@@ -7,10 +7,11 @@
 package comp3011;
 
 import java.nio.ByteBuffer;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.LongConsumer;
+import java.util.function.Supplier;
 
 import org.bytedeco.javacv.Frame;
 
@@ -18,30 +19,35 @@ import org.bytedeco.javacv.Frame;
  * Draws speech-to-text subtitles onto video frames. The cue to show is chosen from the frame's own timestamp, so the
  * result is the same whichever worker thread processes the frame and however playback was paused or seeked. Each cue is
  * rendered once and cached; every later frame only blends the cached image.
+ *
+ * <p>
+ * Where the subtitles come from: a subtitler starts with none. The controller attaches it to the subtitle feeder, whose
+ * track grows as the server's answers arrive. Every frame also tells the feeder where the video is, so the feeder
+ * knows which part of the media to transcribe first.
+ * </p>
  */
 public class FrameSubtitler extends FrameProcessor {
 
-    private static final long SECOND = 1_000_000L;
+    private static final int MAX_CACHED_OVERLAYS = 32; // A cue is on screen for 7 s at most, so few are live at once.
 
-    private final SubtitleTrack track;
     private final Map<SubtitleCue, SubtitleOverlay> overlays = new ConcurrentHashMap<>();
     private SubtitleRenderer renderer;
     private volatile boolean enabled = true; // Flipped by the JavaFX thread, read by the worker threads.
+    private volatile Supplier<SubtitleTrack> trackSource = () -> SubtitleTrack.EMPTY;
+    private volatile LongConsumer positionSink = timestampUs -> {
+    };
 
     public FrameSubtitler() {
-        this(demoTrack());
     }
 
     FrameSubtitler(SubtitleTrack track) {
-        this.track = track;
+        this.trackSource = () -> track;
     }
 
-    // TEMPORARY: hard-coded cues so the drawing can be checked by eye. Replaced by the server's subtitles.
-    private static SubtitleTrack demoTrack() {
-        return new SubtitleTrack(List.of(
-                new SubtitleCue(1 * SECOND, 4 * SECOND, "Hello, and welcome to the subtitle demo."),
-                new SubtitleCue(5 * SECOND, 9 * SECOND, "I went to the shop yesterday, and then I came straight home."),
-                new SubtitleCue(10 * SECOND, 13 * SECOND, "Short one.")));
+    /** Connects this subtitler to the source of its cues. Called once, before playback starts. */
+    void attach(Supplier<SubtitleTrack> trackSource, LongConsumer positionSink) {
+        this.trackSource = trackSource;
+        this.positionSink = positionSink;
     }
 
     @Override
@@ -49,7 +55,7 @@ public class FrameSubtitler extends FrameProcessor {
         super.initialise(videoInfo);
         renderer = new SubtitleRenderer(videoInfo.imageWidth(), videoInfo.imageHeight());
     }
-    
+
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
     }
@@ -60,6 +66,7 @@ public class FrameSubtitler extends FrameProcessor {
 
     @Override
     public void process(Frame frame, InfoFrame info) throws Exception {
+        positionSink.accept(info.timestampUs()); // Even while switched off, so a later switch-on starts in the right place.
         if (!enabled) {
             return;
         }
@@ -73,9 +80,12 @@ public class FrameSubtitler extends FrameProcessor {
             throw new Exception("FrameSubtitler requires 8-bit image frames");
         }
 
-        Optional<SubtitleCue> cue = track.cueAt(info.timestampUs());
+        Optional<SubtitleCue> cue = trackSource.get().cueAt(info.timestampUs());
         if (cue.isEmpty()) {
             return;
+        }
+        if (overlays.size() >= MAX_CACHED_OVERLAYS) {
+            overlays.clear(); // Simplest bound on memory: anything still needed is simply drawn again.
         }
         SubtitleOverlay overlay = overlays.computeIfAbsent(cue.get(), this::buildOverlay);
         SubtitleRenderer.blend(pixels, videoInfo.imageStride(), videoInfo.imageChannels(),
