@@ -148,6 +148,30 @@ class SubtitleFeederTest {
     }
 
     @Test
+    void keepsTheMediaOpenWhenOnlyTheServerFails() throws Exception {
+        AtomicInteger opens = new AtomicInteger();
+        AtomicInteger calls = new AtomicInteger();
+        SubtitleFeeder feeder = new SubtitleFeeder(() -> {
+            opens.incrementAndGet();
+            return new FakeSource(20 * SECOND);
+        }, (audio, name) -> {
+            if (calls.incrementAndGet() <= 3) {
+                throw new IOException("connection refused");
+            }
+            return HELLO;
+        }, 10);
+        try {
+            feeder.setEnabled(true);
+            waitFor(() -> feeder.track().size() > 0);
+
+            assertTrue(calls.get() >= 4);
+            assertEquals(1, opens.get());
+        } finally {
+            feeder.shutdown();
+        }
+    }
+
+    @Test
     void opensTheMediaAgainAfterItWasLost() throws Exception {
         AtomicInteger opens = new AtomicInteger();
         SubtitleFeeder feeder = new SubtitleFeeder(() -> {

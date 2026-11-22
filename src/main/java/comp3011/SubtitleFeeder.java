@@ -23,9 +23,10 @@ import java.util.List;
  * </p>
  *
  * <p>
- * Failures: the server being down, the network dropping, an error reply or the media file disappearing all end up as an
- * {@link IOException}. The feeder then waits (1 s, 2 s, 4 s ... up to 10 s), opens the media again and retries the same
- * stretch, so subtitles resume by themselves when the network or the media comes back. Playback is never affected.
+ * Failures: the server being down, the network dropping or an error reply all end up as an {@link IOException}, as does
+ * the media file disappearing. The feeder then waits (1 s, 2 s, 4 s ... up to 10 s) and retries the same stretch, so
+ * subtitles resume by themselves when the network or the media comes back. If the media was the problem it is opened
+ * again for the retry; if only the server was, the media stays open. Playback is never affected.
  * </p>
  */
 final class SubtitleFeeder {
@@ -137,10 +138,12 @@ final class SubtitleFeeder {
                     }
                 } catch (IOException | RuntimeException e) {
                     failures++;
-                    closeQuietly(source);
-                    source = null; // reopened on the next attempt, as the media may have come back
+                    if (!(e instanceof ServerUnavailableException)) {
+                        closeQuietly(source);
+                        source = null; // reopened on the next attempt, as the media may have come back
+                    }
                     if (failures == 1 || failures % 10 == 0) {
-                        System.err.println("Subtitles: " + e.getMessage() + " (retrying in " + backoffMs / 1000.0
+                        System.err.println("Subtitles: " + describe(e) + " (retrying in " + backoffMs / 1000.0
                                 + " s)");
                     }
                     pause(backoffMs);
@@ -181,13 +184,32 @@ final class SubtitleFeeder {
             return true; // switched off while reading: send nothing, and do not mark it done
         }
 
-        List<SpokenSegment> segments = transcriber.transcribe(chunk.wav(), "chunk-" + (++chunkCount) + ".wav");
+        List<SpokenSegment> segments;
+        try {
+            segments = transcriber.transcribe(chunk.wav(), "chunk-" + (++chunkCount) + ".wav");
+        } catch (IOException e) {
+            throw new ServerUnavailableException(e); // the media is fine, so it is kept open for the retry
+        }
         List<SubtitleCue> cues = SubtitleCueBuilder.build(segments, chunk.startUs());
         if (!cues.isEmpty()) {
             track = track.plus(cues); // swapping one volatile reference publishes it to the drawing threads
         }
         coverage.markCovered(start, Math.max(chunk.startUs() + chunk.durationUs(), start + MIN_PROGRESS_US));
         return true;
+    }
+
+    /** A failure of the server or the network, as opposed to a failure of the media. */
+    private static final class ServerUnavailableException extends IOException {
+        private static final long serialVersionUID = 1L;
+
+        ServerUnavailableException(IOException cause) {
+            super(describe(cause), cause);
+        }
+    }
+
+    // Some exceptions (a refused connection, for one) carry no message, so fall back to the exception's name.
+    private static String describe(Throwable e) {
+        return e.getMessage() != null ? e.getMessage() : e.toString();
     }
 
     private boolean isEnabled() {
