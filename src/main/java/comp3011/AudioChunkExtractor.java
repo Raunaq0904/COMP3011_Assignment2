@@ -24,7 +24,7 @@ import org.bytedeco.javacv.FrameGrabber;
  * Every failure (file missing, unreadable, removed mid-read) is reported as an {@link IOException}.
  * </p>
  */
-final class AudioChunkExtractor implements AutoCloseable {
+final class AudioChunkExtractor implements ChunkSource {
 
     static final int SAMPLE_RATE = 16_000;
     private static final int CHANNELS = 1;
@@ -52,12 +52,14 @@ final class AudioChunkExtractor implements AutoCloseable {
         this.grabber = opened;
     }
 
-    long durationUs() {
+    @Override
+    public long durationUs() {
         return grabber.getLengthInTime();
     }
 
     /** Moves the next chunk to start at (about) this position in the media. */
-    void seekTo(long positionUs) throws IOException {
+    @Override
+    public void seekTo(long positionUs) throws IOException {
         try {
             grabber.setTimestamp(Math.max(0, positionUs));
         } catch (RuntimeException e) {
@@ -70,7 +72,8 @@ final class AudioChunkExtractor implements AutoCloseable {
      *
      * @return the chunk, or null when the end of the media has been reached
      */
-    AudioChunk nextChunk(long maxDurationUs) throws IOException {
+    @Override
+    public AudioChunk nextChunk(long maxDurationUs) throws IOException {
         long maxSamples = Math.max(1, maxDurationUs * SAMPLE_RATE / MICROS_PER_SECOND);
         ByteArrayOutputStream pcm = new ByteArrayOutputStream();
         long samples = 0;

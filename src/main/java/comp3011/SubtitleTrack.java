@@ -32,6 +32,13 @@ public final class SubtitleTrack {
         return cues.size();
     }
 
+    /** Returns a new track holding this track's cues plus the given ones. This track is not changed. */
+    public SubtitleTrack plus(List<SubtitleCue> more) {
+        List<SubtitleCue> all = new ArrayList<>(cues);
+        all.addAll(more);
+        return new SubtitleTrack(all);
+    }
+
     /**
      * Finds the cue to show at a video time: the last cue that has started, if it has not yet ended. Uses a binary
      * search because this runs once for every frame.
